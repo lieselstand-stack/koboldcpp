@@ -121,6 +121,14 @@ struct mtmd_image_preprocessor_fixed_size : mtmd_image_preprocessor {
 struct mtmd_image_preprocessor_dyn_size : mtmd_image_preprocessor {
     mtmd_image_preprocessor_dyn_size(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+    virtual clip_image_size target_size(const clip_image_size & original_size) const;
+};
+
+// LFM3-VL smart resize matching the reference processor.
+struct mtmd_image_preprocessor_lfm3vl : mtmd_image_preprocessor_dyn_size {
+    mtmd_image_preprocessor_lfm3vl(const clip_ctx * ctx) : mtmd_image_preprocessor_dyn_size(ctx) {}
+    clip_image_size target_size(const clip_image_size & original_size) const override;
+    static clip_image_size smart_resize(int width, int height, int factor, int64_t min_pixels, int64_t max_pixels);
 };
 
 // similar to mtmd_image_preprocessor_dyn_size, but resize the image to have longest edge equal to hparams.image_longest_edge, while preserving aspect ratio
