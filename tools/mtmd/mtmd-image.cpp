@@ -767,17 +767,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_i
     GGML_ASSERT(hparams.image_min_pixels > 0 && hparams.image_max_pixels > 0);
     clip_image_u8 resized_image;
     const clip_image_size original_size = img.get_size();
-    // the original pixtral model doesn't have n_merge
-    const int cur_merge = hparams.n_merge;
+    // The target size is virtual so LFM3-VL can apply the exact smart_resize rule.
     const clip_image_size target_size = this->target_size(original_size);
-    /* const clip_image_size target_size = img_tool::calc_size_preserved_ratio(
-        original_size,
-        {
-            /* align_size   */ hparams.patch_size * cur_merge,
-            /* min_pixels   */ hparams.image_min_pixels,
-            /* max_pixels   */ hparams.image_max_pixels,
-            /* longest_edge */ 0,
-        }); */
     img_tool::resize(img, resized_image, target_size,
                         hparams.image_resize_algo,
                         hparams.image_resize_pad,
