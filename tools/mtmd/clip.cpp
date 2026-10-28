@@ -1034,6 +1034,10 @@ static std::unique_ptr<clip_graph> clip_get_graph_builder(clip_ctx * ctx, const 
             {
                 builder = std::make_unique<clip_graph_qwen3vl>(ctx, img);
             } break;
+        case PROJECTOR_TYPE_LFM3VL:
+            {
+                builder = std::make_unique<clip_graph_lfm3vl>(ctx, img);
+            } break;
         case PROJECTOR_TYPE_EXAONE4_5:
             {
                 builder = std::make_unique<clip_graph_exaone4_5>(ctx, img);
@@ -1723,6 +1727,34 @@ struct clip_model_loader {
                         //     LOG_WRN("%s: if you encounter problems with accuracy, try adding --image-min-tokens 1024\n", __func__);
                         //     LOG_WRN("%s: more info: https://github.com/ggml-org/llama.cpp/issues/16842\n\n", __func__);
                         // }
+                    } break;
+                case PROJECTOR_TYPE_LFM3VL:
+                    {
+                        std::string resize_algo;
+                        get_string(KEY_IMAGE_RESIZE_ALGO, resize_algo);
+                        if (resize_algo == "bilinear") {
+                            hparams.set_image_resize_algo(RESIZE_ALGO_BILINEAR, true);
+                        } else if (resize_algo == "bicubic") {
+                            hparams.set_image_resize_algo(RESIZE_ALGO_BICUBIC, true);
+                        } else {
+                            throw std::runtime_error(string_format("%s: unsupported image resize algo: %s\n", __func__, resize_algo.c_str()));
+                        }
+                        hparams.image_resize_pad = PAD_NONE;
+                        get_u32(KEY_SPATIAL_MERGE_SIZE, hparams.n_merge);
+                        if (hparams.n_merge != 2) {
+                            throw std::runtime_error(string_format("%s: unsupported spatial_merge_size %d for lfm3vl, only 2 is supported\n", __func__, hparams.n_merge));
+                        }
+                        get_u32(string_format(KEY_N_HEAD_KV, "vision"), hparams.n_head_kv);
+                        hparams.rope_theta = 1000000.0f;
+                        int min_pixels = 0, max_pixels = 0;
+                        get_u32(KEY_IMAGE_MIN_PIXELS, min_pixels);
+                        get_u32(KEY_IMAGE_MAX_PIXELS, max_pixels);
+                        if (min_pixels <= 0 || max_pixels < min_pixels) {
+                            throw std::runtime_error(string_format("%s: invalid image min/max pixels %d/%d\n", __func__, min_pixels, max_pixels));
+                        }
+                        const int patch_area = hparams.patch_size * hparams.patch_size * hparams.n_merge * hparams.n_merge;
+                        hparams.set_limit_image_tokens(min_pixels / patch_area, std::min(4096, max_pixels / patch_area));
+                        hparams.set_warmup_n_tokens(46*46);
                     } break;
                 case PROJECTOR_TYPE_MINIMAX_M3:
                     {
@@ -2557,6 +2589,23 @@ struct clip_model_loader {
                     model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"), false);
                     model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 2, "weight"));
                     model.mm_1_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"), false);
+                } break;
+            case PROJECTOR_TYPE_LFM3VL:
+                {
+                    model.mm_input_norm_w = get_tensor(TN_MM_INP_NORM);
+                    model.mm_input_norm_b = get_tensor(TN_MM_INP_NORM_B);
+                    model.mm_0_w = get_tensor(string_format(TN_LLAVA_PROJ, 0, "weight"));
+                    model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
+                    model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 2, "weight"));
+                    model.mm_1_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"));
+                    for (size_t il = 0; il < model.layers.size(); ++il) {
+                        const auto & layer = model.layers[il];
+                        const bool is_conv = layer.conv2d_in_proj_w != nullptr;
+                        const bool is_attn = layer.q_w && layer.k_w && layer.v_w && layer.o_w;
+                        if (is_conv == is_attn) {
+                            throw std::runtime_error(string_format("%s: lfm3vl layer %zu is neither a complete conv nor a complete attention block\n", __func__, il));
+                        }
+                    }
                 } break;
             case PROJECTOR_TYPE_MINIMAX_M3:
                 {
@@ -4099,6 +4148,7 @@ int clip_n_output_tokens_x(const clip_ctx * ctx, const clip_image_f32 * img) {
         case PROJECTOR_TYPE_QWEN2VL:
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
+        case PROJECTOR_TYPE_LFM3VL:
         case PROJECTOR_TYPE_EXAONE4_5:
         case PROJECTOR_TYPE_MIMOVL:
         case PROJECTOR_TYPE_GLM4V:
@@ -4830,6 +4880,23 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
                 set_input_i32("merger_ds_idx_1", m_ds_1);
                 set_input_i32("merger_ds_idx_2", m_ds_2);
                 set_input_i32("merger_ds_idx_3", m_ds_3);
+            } break;
+        case PROJECTOR_TYPE_LFM3VL:
+            {
+                const int pw = image_size_width / patch_size;
+                const int ph = image_size_height / patch_size;
+                std::vector<int> positions(n_pos * 4);
+                int ptr = 0;
+                for (int y = 0; y < ph; y++) {
+                    for (int x = 0; x < pw; x++) {
+                        positions[ptr] = y;
+                        positions[num_patches + ptr] = x;
+                        positions[2 * num_patches + ptr] = y;
+                        positions[3 * num_patches + ptr] = x;
+                        ptr++;
+                    }
+                }
+                set_input_i32("positions", positions);
             } break;
         case PROJECTOR_TYPE_QWEN2VL:
         case PROJECTOR_TYPE_QWEN3VL:
