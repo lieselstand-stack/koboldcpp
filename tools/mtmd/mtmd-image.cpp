@@ -769,14 +769,15 @@ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_i
     const clip_image_size original_size = img.get_size();
     // the original pixtral model doesn't have n_merge
     const int cur_merge = hparams.n_merge;
-    const clip_image_size target_size = img_tool::calc_size_preserved_ratio(
+    const clip_image_size target_size = this->target_size(original_size);
+    /* const clip_image_size target_size = img_tool::calc_size_preserved_ratio(
         original_size,
         {
             /* align_size   */ hparams.patch_size * cur_merge,
             /* min_pixels   */ hparams.image_min_pixels,
             /* max_pixels   */ hparams.image_max_pixels,
             /* longest_edge */ 0,
-        });
+        }); */
     img_tool::resize(img, resized_image, target_size,
                         hparams.image_resize_algo,
                         hparams.image_resize_pad,
@@ -787,6 +788,36 @@ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_i
 }
 
 //
+clip_image_size mtmd_image_preprocessor_dyn_size::target_size(const clip_image_size & original_size) const {
+    return img_tool::calc_size_preserved_ratio(original_size, {
+        /* align_size */ hparams.patch_size * (hparams.n_merge == 0 ? 1 : hparams.n_merge),
+        /* min_pixels */ hparams.image_min_pixels,
+        /* max_pixels */ hparams.image_max_pixels,
+        /* longest_edge */ 0,
+    });
+}
+
+clip_image_size mtmd_image_preprocessor_lfm3vl::smart_resize(int width, int height, int factor, int64_t min_pixels, int64_t max_pixels) {
+    const double h = height, w = width;
+    int h_bar = static_cast<int>(std::nearbyint(h / factor)) * factor;
+    int w_bar = static_cast<int>(std::nearbyint(w / factor)) * factor;
+    if (static_cast<int64_t>(h_bar) * w_bar > max_pixels) {
+        const double beta = std::sqrt(h * w / max_pixels);
+        h_bar = static_cast<int>(std::floor(h / beta / factor)) * factor;
+        w_bar = static_cast<int>(std::floor(w / beta / factor)) * factor;
+    } else if (static_cast<int64_t>(h_bar) * w_bar < min_pixels) {
+        const double beta = std::sqrt(min_pixels / (h * w));
+        h_bar = static_cast<int>(std::ceil(h * beta / factor)) * factor;
+        w_bar = static_cast<int>(std::ceil(w * beta / factor)) * factor;
+    }
+    return {std::max(factor, w_bar), std::max(factor, h_bar)};
+}
+
+clip_image_size mtmd_image_preprocessor_lfm3vl::target_size(const clip_image_size & original_size) const {
+    return smart_resize(original_size.width, original_size.height, hparams.patch_size * hparams.n_merge,
+                        hparams.image_min_pixels, hparams.image_max_pixels);
+}
+
 // mtmd_image_preprocessor_longest_edge
 //
 
