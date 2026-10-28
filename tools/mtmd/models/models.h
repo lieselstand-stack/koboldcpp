@@ -162,11 +162,6 @@ struct clip_graph_conformer : clip_graph {
     ggml_cgraph * build() override;
 };
 
-struct clip_graph_lfm3a : clip_graph {
-    clip_graph_lfm3a(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
-    ggml_cgraph * build() override;
-};
-
 struct clip_graph_granite_speech : clip_graph {
     clip_graph_granite_speech(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     ggml_cgraph * build() override;
@@ -396,31 +391,6 @@ std::vector<c2w_state_slot> list_c2w_state_slots(const clip_hparams & hparams, c
 
 // same, for the streaming mimi decoder (pocket-tts GEN_WAV)
 std::vector<c2w_state_slot> list_pockettts_state_slots(const clip_hparams & hparams, const clip_model & model);
-
-// LFM3-Audio generation graph: MaskGIT depthformer and codec decoder.
-struct clip_graph_lfm3a_gen : clip_graph {
-    clip_graph_lfm3a_gen(clip_ctx * ctx, const clip_image_f32 & img, clip_gen_process_type gen_process, bool all_known, int n_frames)
-        : clip_graph(ctx, img), gen_process(gen_process), all_known(all_known), n_frames(n_frames) {}
-    ggml_cgraph * build() override;
-
-    clip_gen_process_type gen_process;
-    bool all_known;
-    int n_frames;
-
-    ggml_tensor * build_gen_code();
-    ggml_tensor * build_gen_wav();
-    ggml_tensor * build_lfm_layer(ggml_tensor * inpL, const clip_layer & layer, float eps, int il,
-                                  const std::function<ggml_tensor *(ggml_tensor *)> & op);
-    ggml_tensor * build_lfm_attn(ggml_tensor * cur, const clip_layer & layer, int n_head, int n_head_kv,
-                                 float eps, float rope_theta, int il, ggml_tensor * inp_pos,
-                                 ggml_tensor * kq_mask, ggml_tensor * k_cache, ggml_tensor * v_cache,
-                                 ggml_tensor ** k_all, ggml_tensor ** v_all);
-    ggml_tensor * build_lfm_conv(ggml_tensor * cur, const clip_layer & layer, int il,
-                                 ggml_tensor * conv_state, ggml_tensor ** conv_state_out);
-};
-
-std::vector<c2w_state_slot> list_lfm3a_gen_state_slots(const clip_hparams & hparams, const clip_model & model);
-std::vector<c2w_state_slot> list_lfm3a_state_slots(const clip_hparams & hparams, const clip_model & model);
 
 struct clip_graph_kimik25 : clip_graph {
     clip_graph_kimik25(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
