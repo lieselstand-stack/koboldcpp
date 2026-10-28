@@ -541,6 +541,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_MERALION,          "meralion"},
     { PROJECTOR_TYPE_MUSIC_FLAMINGO,    "musicflamingo"},
     { PROJECTOR_TYPE_LFM2,              "lfm2"},
+    { PROJECTOR_TYPE_LFM3VL,           "lfm3vl"},
     { PROJECTOR_TYPE_KIMIVL,            "kimivl"},
     { PROJECTOR_TYPE_PADDLEOCR,         "paddleocr"},
     { PROJECTOR_TYPE_LIGHTONOCR,        "lightonocr"},
