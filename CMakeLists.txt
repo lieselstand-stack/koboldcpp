@@ -484,6 +484,8 @@ add_library(common2
             tools/mtmd/mtmd-helper-common.h
             tools/mtmd/clip.cpp
             tools/mtmd/models/lfm3vl.cpp
+            tools/mtmd/models/lfm3a.cpp
+            tools/mtmd/models/lfm3a-gen.cpp
             tools/mtmd/clip.h
             src/unicode.h
             src/unicode.cpp
