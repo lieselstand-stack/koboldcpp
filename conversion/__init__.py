@@ -310,7 +310,6 @@ MMPROJ_MODEL_MAP: dict[str, str] = {
     "KimiK25ForConditionalGeneration": "kimivl",
     "KimiVLForConditionalGeneration": "kimivl",
     "Lfm2AudioForConditionalGeneration": "lfm2",
-    "Lfm3OmniForConditionalGeneration": "lfm3",
     "Lfm2VlForConditionalGeneration": "lfm2",
     "Lfm3VlForConditionalGeneration": "lfm3",
     "LightOnOCRForConditionalGeneration": "lighton_ocr",
