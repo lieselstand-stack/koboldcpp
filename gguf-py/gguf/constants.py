@@ -5659,7 +5659,6 @@ class VisionProjectorType:
     VOXTRAL = "voxtral"
     MERALION = "meralion"  # audio: Whisper + gated MLP adaptor
     LFM2 = "lfm2"
-    LFM3 = "lfm3"
     KIMIVL = "kimivl"
     PADDLEOCR = "paddleocr"
     KIMIK25 = "kimik25"
