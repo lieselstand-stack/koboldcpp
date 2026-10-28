@@ -159,6 +159,12 @@
 #define TN_DEEPSTACK_FC1   "v.deepstack.%d.fc1.%s"      // qwen3vl deepstack
 #define TN_DEEPSTACK_FC2   "v.deepstack.%d.fc2.%s"      // qwen3vl deepstack
 
+// lfm3vl
+#define TN_LFM3VL_EMBEDDING_NORM   "%s.embedding_norm.%s"
+#define TN_LFM3VL_CONV2D_IN_PROJ   "%s.blk.%d.conv2d_in_proj.%s"
+#define TN_LFM3VL_CONV2D_SPATIAL   "%s.blk.%d.conv2d_spatial.%s"
+#define TN_LFM3VL_CONV2D_OUT_PROJ  "%s.blk.%d.conv2d_out_proj.%s"
+
 // mimicpmv
 #define TN_MINICPMV_POS_EMBD_K "resampler.pos_embed_k"
 #define TN_MINICPMV_QUERY      "resampler.query"
