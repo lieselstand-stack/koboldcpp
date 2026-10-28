@@ -12,30 +12,25 @@ from .base import MmprojModel, ModelBase, TextModel, gguf
 from .gemma import ConformerAudioModel
 
 
-def lfm2_feed_forward_length(hparams: dict[str, Any]) -> int:
-    ff_dim = hparams.get("block_ff_dim", hparams.get("intermediate_size"))
-    assert ff_dim is not None
-    auto_adjust_ff_dim = hparams["block_auto_adjust_ff_dim"]
-    ffn_dim_multiplier = hparams["block_ffn_dim_multiplier"]
-    multiple_of = hparams["block_multiple_of"]
-
-    if auto_adjust_ff_dim:
-        ff_dim = int(2 * ff_dim / 3)
-        # custom dim factor multiplier
-        if ffn_dim_multiplier is not None:
-            ff_dim = int(ffn_dim_multiplier * ff_dim)
-        ff_dim = multiple_of * ((ff_dim + multiple_of - 1) // multiple_of)
-
-    return ff_dim
-
-
 @ModelBase.register("Lfm2ForCausalLM", "LFM2ForCausalLM")
 @ModelBase.example("LiquidAI/LFM2-1.2B", "LiquidAI/LFM2.5-350M")
 class LFM2Model(TextModel):
     model_arch = gguf.MODEL_ARCH.LFM2
 
     def _add_feed_forward_length(self):
-        self.gguf_writer.add_feed_forward_length(lfm2_feed_forward_length(self.hparams))
+        ff_dim = self.find_hparam(["block_ff_dim", "intermediate_size"])
+        auto_adjust_ff_dim = self.hparams["block_auto_adjust_ff_dim"]
+        ffn_dim_multiplier = self.hparams["block_ffn_dim_multiplier"]
+        multiple_of = self.hparams["block_multiple_of"]
+
+        if auto_adjust_ff_dim:
+            ff_dim = int(2 * ff_dim / 3)
+            # custom dim factor multiplier
+            if ffn_dim_multiplier is not None:
+                ff_dim = int(ffn_dim_multiplier * ff_dim)
+            ff_dim = multiple_of * ((ff_dim + multiple_of - 1) // multiple_of)
+
+        self.gguf_writer.add_feed_forward_length(ff_dim)
 
     def set_gguf_parameters(self):
         # set num_key_value_heads only for attention layers
