@@ -1127,6 +1127,10 @@ static std::unique_ptr<clip_graph> clip_get_graph_builder(clip_ctx * ctx, const 
             {
                 builder = std::make_unique<clip_graph_conformer>(ctx, img);
             } break;
+        case PROJECTOR_TYPE_LFM3A:
+            {
+                builder = std::make_unique<clip_graph_lfm3a>(ctx, img);
+            } break;
         case PROJECTOR_TYPE_GEMMA4A:
             {
                 builder = std::make_unique<clip_graph_gemma4a>(ctx, img);
@@ -1173,6 +1177,24 @@ static std::unique_ptr<clip_graph> clip_get_graph_builder(clip_ctx * ctx, const 
                 }
                 const int  n_frames = params && params->feats ? (int) (params->feats->size() / n_latent) : 1;
                 builder = std::make_unique<clip_graph_pockettts_gen>(ctx, img, gen_process, n_step, n_frames);
+            } break;
+        case PROJECTOR_TYPE_LFM3A_GEN:
+            {
+                const auto    gen_process = params ? params->gen_process : CLIP_GEN_PROCESS_GEN_CODE;
+                const int64_t n_cb        = ctx->model.gen_code_embd_w->ne[2];
+                bool all_known = false;
+                int  n_frames  = 1;
+                if (params && params->codes) {
+                    GGML_ASSERT(params->codes->size() % (size_t) n_cb == 0);
+                    if (gen_process == CLIP_GEN_PROCESS_GEN_WAV) {
+                        n_frames = (int) (params->codes->size() / n_cb);
+                        GGML_ASSERT(n_frames > 0);
+                    } else {
+                        // -1 marks a masked codebook, none masked means only the feedback embedding is needed
+                        all_known = std::all_of(params->codes->begin(), params->codes->end(), [](int32_t c) { return c >= 0; });
+                    }
+                }
+                builder = std::make_unique<clip_graph_lfm3a_gen>(ctx, img, gen_process, all_known, n_frames);
             } break;
         case PROJECTOR_TYPE_QWEN3TTS_GEN:
             {
@@ -1921,6 +1943,33 @@ struct clip_model_loader {
                         hparams.audio_window_len  = 1024;
                         hparams.audio_hop_len     = 256;
                     } break;
+                case PROJECTOR_TYPE_LFM3A_GEN:
+                    {
+                        // fixed by LiquidCodecConfig, head counts come from the tensors
+                        hparams.rope_theta = 1000000.0f;
+
+                        hparams.wav_tfm_n_layer    = 8;
+                        hparams.wav_tfm_n_embd     = 512;
+                        hparams.wav_tfm_eps        = 1e-5f;
+                        hparams.wav_tfm_rope_theta = 1000000.0f;
+                        hparams.wav_tfm_swa        = 30; // decoder_window
+                        hparams.wav_frame_stack    = 6;  // stft_frame_stack, STFT frames per codec frame
+                        // the ISTFT runs on the host, see mtmd_gen_audio_process()
+                        hparams.audio_sample_rate  = 24000;
+                        hparams.audio_n_fft        = 1280;
+                        hparams.audio_window_len   = 1280;
+                        hparams.audio_hop_len      = 320;
+
+                        // speech-code sampling, the converter writes the model card values; else the LFM3-Omni card
+                        hparams.gen_temp           = 0.4f;
+                        hparams.gen_top_k          = 0;
+                        hparams.gen_penalty_repeat = 1.2f;
+                        hparams.gen_penalty_last_n = 64;
+                        get_f32(KEY_GEN_AUDIO_TEMP,           hparams.gen_temp,           false);
+                        get_i32(KEY_GEN_AUDIO_TOP_K,          hparams.gen_top_k,          false);
+                        get_f32(KEY_GEN_AUDIO_PENALTY_REPEAT, hparams.gen_penalty_repeat, false);
+                        get_i32(KEY_GEN_AUDIO_PENALTY_LAST_N, hparams.gen_penalty_last_n, false);
+                    } break;
                 case PROJECTOR_TYPE_QWEN3TTS_GEN:
                     {
                         // TODO: hardcoded for now, read from code_predictor_config instead
@@ -2016,6 +2065,20 @@ struct clip_model_loader {
                         hparams.audio_chunk_len        = 1; // in seconds
                         hparams.audio_sample_rate      = 16000;
                         hparams.audio_n_fft            = 512;
+                        hparams.audio_window_len       = 400;
+                        hparams.audio_hop_len          = 160;
+                    } break;
+                case PROJECTOR_TYPE_LFM3A:
+                    {
+                        get_u32(KEY_A_ATTN_WINDOW_SIZE, hparams.attn_window_size);
+                        if (hparams.attn_window_size <= 0) {
+                            throw std::runtime_error(string_format("%s: invalid audio attention window %d\n", __func__, hparams.attn_window_size));
+                        }
+                        hparams.rope_theta = 1000000.0f; // checked by the converter
+                        // audio preprocessing params, see mtmd_audio_preprocessor_lfm3a
+                        hparams.audio_chunk_len        = 0;
+                        hparams.audio_sample_rate      = 16000;
+                        hparams.audio_n_fft            = 400;
                         hparams.audio_window_len       = 400;
                         hparams.audio_hop_len          = 160;
                     } break;
@@ -2344,8 +2407,9 @@ struct clip_model_loader {
         model.layers.resize(n_layers_to_load);
         for (int il = 0; il < n_layers_to_load; ++il) {
             auto & layer = model.layers[il];
-            // lfm3vl conv layers have no attention tensors
-            const bool o_w_required = model.proj_type != PROJECTOR_TYPE_LFM3VL;
+            // lfm3vl / lfm3a conv layers have no attention tensors
+            const bool o_w_required = model.proj_type != PROJECTOR_TYPE_LFM3VL
+                                   && model.proj_type != PROJECTOR_TYPE_LFM3A;
             layer.k_w    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "weight"), false);
             layer.q_w    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "weight"), false);
             layer.v_w    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "weight"), false);
@@ -3489,6 +3553,39 @@ struct clip_model_loader {
                         layer.conv_pw2_b   = get_tensor(string_format(TN_CONV_PW2,  prefix, il, "bias"));
                     }
                 } break;
+            case PROJECTOR_TYPE_LFM3A:
+                {
+                    for (int i : {0, 2, 3, 5, 6}) {
+                        model.pre_encode_conv_X_w[i] = get_tensor(string_format(TN_CONV1D, i, "weight"));
+                        model.pre_encode_conv_X_b[i] = get_tensor(string_format(TN_CONV1D, i, "bias"));
+                    }
+                    model.pre_encode_out_w = get_tensor(string_format(TN_PRE_ENCODE_OUT, "weight"));
+                    model.pre_encode_out_b = get_tensor(string_format(TN_PRE_ENCODE_OUT, "bias"));
+
+                    model.mm_0_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 0, "weight"));
+                    model.mm_0_b = get_tensor(string_format(TN_MM_AUDIO_MLP, 0, "bias"));
+                    model.mm_1_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 1, "weight"));
+                    model.mm_1_b = get_tensor(string_format(TN_MM_AUDIO_MLP, 1, "bias"));
+                    model.mm_3_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 3, "weight"));
+                    model.mm_3_b = get_tensor(string_format(TN_MM_AUDIO_MLP, 3, "bias"));
+
+                    if (!model.post_ln_w) {
+                        throw std::runtime_error(string_format("%s: missing tensor %s\n", __func__, string_format(TN_LN_POST, prefix, "weight").c_str()));
+                    }
+
+                    // each layer is either a short conv block or a complete attention block
+                    for (int il = 0; il < hparams.n_layer; ++il) {
+                        auto & layer = model.layers[il];
+                        layer.conv_pw1_w = get_tensor(string_format(TN_CONV_PW1, prefix, il, "weight"), false);
+                        layer.conv_dw_w  = get_tensor(string_format(TN_CONV_DW,  prefix, il, "weight"), false);
+                        layer.conv_pw2_w = get_tensor(string_format(TN_CONV_PW2, prefix, il, "weight"), false);
+                        const bool is_conv = layer.conv_pw1_w && layer.conv_dw_w && layer.conv_pw2_w;
+                        const bool is_attn = layer.q_w && layer.k_w && layer.v_w && layer.o_w && layer.q_norm && layer.k_norm;
+                        if (is_conv == is_attn) {
+                            throw std::runtime_error(string_format("%s: lfm3a layer %d is neither a complete conv nor a complete attention block\n", __func__, il));
+                        }
+                    }
+                } break;
             case PROJECTOR_TYPE_PARAKEET:
                 {
 
@@ -4103,6 +4200,10 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
         if (loader.has_gen_audio) {
             ctx_gen_audio = new clip_ctx(ctx_params);
             loader.load_hparams(ctx_gen_audio->model, CLIP_MODALITY_GEN_AUDIO);
+            // TODO: CUDA has no flash attention kernel for the depthformer head dim 32, enable it once it does
+            if (ctx_gen_audio->model.proj_type == PROJECTOR_TYPE_LFM3A_GEN && ctx_gen_audio->flash_attn_type == CLIP_FLASH_ATTN_TYPE_AUTO) {
+                ctx_gen_audio->flash_attn_type = CLIP_FLASH_ATTN_TYPE_DISABLED;
+            }
             loader.load_tensors(*ctx_gen_audio);
             // TODO: fix warmup
             ctx_gen_audio->buf_compute_meta.resize(ctx_gen_audio->max_nodes * ggml_tensor_overhead() + ggml_graph_overhead());
@@ -4452,6 +4553,7 @@ int clip_n_output_tokens(const clip_ctx * ctx, const clip_image_f32 * img) {
                 n_patches = 1;
             } break;
         case PROJECTOR_TYPE_QWEN3TTS_GEN:
+        case PROJECTOR_TYPE_LFM3A_GEN:
             {
                 // one hidden-state vector fed back to the talker per call
                 n_patches = 1;
@@ -4510,11 +4612,12 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
     return clip_encode(ctx, &params);
 }
 
-// persisted state slots of the gen-audio decoder, per pipeline
+// persisted state slots of the gen-audio decoders and the streaming audio encoders
 static std::vector<c2w_state_slot> list_gen_state_slots(const clip_hparams & hparams, const clip_model & model) {
     switch (model.proj_type) {
         case PROJECTOR_TYPE_QWEN3TTS_GEN:  return list_c2w_state_slots(hparams, model);
         case PROJECTOR_TYPE_POCKETTTS_GEN: return list_pockettts_state_slots(hparams, model);
+        case PROJECTOR_TYPE_LFM3A_GEN:     return list_lfm3a_gen_state_slots(hparams, model);
         default:                           return {};
     }
 }
@@ -4599,6 +4702,28 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         }
     };
 
+    // lfm3a encoder and codec: causal sliding window over [cached window | this call]
+    auto set_lfm3a_window_inputs = [&](int base, int n_pos, int window) {
+        std::vector<int32_t> positions(n_pos);
+        for (int i = 0; i < n_pos; i++) {
+            positions[i] = base + i;
+        }
+        set_input_i32("positions", positions);
+
+        // key j holds position base - prefix + j
+        const int prefix = window - 1;
+        const int n_kv   = prefix + n_pos;
+        std::vector<float> mask((size_t) n_kv * n_pos, -INFINITY);
+        for (int q = 0; q < n_pos; q++) {
+            for (int j = std::max(0, q + prefix - window + 1); j <= q + prefix; j++) {
+                if (base - prefix + j >= 0) {
+                    mask[(size_t) q * n_kv + j] = 0.0f;
+                }
+            }
+        }
+        set_input_attn_mask(mask);
+    };
+
     // rope positions and attention mask of the mimi transformers (pocket-tts).
     // the mask is causal with a sliding window, see _build_attention_mask() in the reference
     auto set_pockettts_tfm_inputs = [&]() {
@@ -4670,8 +4795,9 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         }
         set_input_f32("inp_raw", inp_raw);
 
-    } else if (params->gen_process != CLIP_GEN_PROCESS_GEN_WAV) {
-        // audio input. GEN_WAV is not here: it takes codes or feats, set in the switch below
+    } else if (params->gen_process != CLIP_GEN_PROCESS_GEN_WAV && ggml_graph_get_tensor(gf, "inp_raw") != nullptr) {
+        // audio input. GEN_WAV is not here: it takes codes or feats, set in the switch below.
+        // a GEN_CODE graph may have no hidden-state input (lfm3a_gen feedback embedding)
         GGML_ASSERT(imgs.entries.size() == 1);
 
         const auto & mel_inp = imgs.entries[0];
@@ -5337,6 +5463,53 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
             {
                 // do nothing
             } break;
+        case PROJECTOR_TYPE_LFM3A_GEN:
+            {
+                const int64_t n_cb    = model.gen_code_embd_w->ne[2];
+                const int64_t n_vocab = model.gen_code_embd_w->ne[1];
+                if (params->gen_process == CLIP_GEN_PROCESS_GEN_WAV) {
+                    GGML_ASSERT(params->codes != nullptr);
+                    // codes index the FSQ table via ggml_get_rows, the end-of-audio code has no waveform
+                    const int64_t n_codes = model.c2w.quant_first_cb_w->ne[1];
+                    for (int32_t c : *params->codes) {
+                        if (c < 0 || c >= n_codes) {
+                            LOG_ERR("%s: code out of range (%d, codebook size %lld)\n", __func__, c, (long long) n_codes);
+                            return false;
+                        }
+                    }
+                    std::vector<int32_t> codes = *params->codes;
+                    set_input_i32("inp_codes", codes);
+                    set_gen_state_in();
+                    // the "pos" slot leads the state
+                    float base = 0.0f;
+                    ggml_backend_tensor_get(params->gen_state->slots[0], &base, 0, sizeof(float));
+                    set_lfm3a_window_inputs((int) base, (int) ggml_nelements(get_inp_tensor("positions")), hparams.wav_tfm_swa);
+                } else {
+                    // rows of the merged per-codebook tables; a masked codebook (-1) takes row 0, the mask drops it
+                    std::vector<int32_t> codes(n_cb, -1);
+                    if (params->codes) {
+                        GGML_ASSERT(params->codes->size() == (size_t) n_cb);
+                        codes = *params->codes;
+                    }
+                    std::vector<float> mask(n_cb, 0.0f);
+                    for (int64_t i = 0; i < n_cb; i++) {
+                        if (codes[i] >= n_vocab) {
+                            LOG_ERR("%s: code out of range (%d, vocab %lld)\n", __func__, codes[i], (long long) n_vocab);
+                            return false;
+                        }
+                        if (codes[i] < 0) {
+                            codes[i] = 0;
+                        } else {
+                            mask[i] = 1.0f;
+                        }
+                        codes[i] += (int32_t) (i * n_vocab);
+                    }
+                    set_input_i32("inp_codes", codes);
+                    if (ggml_graph_get_tensor(gf, "inp_mask") != nullptr) {
+                        set_input_f32("inp_mask", mask);
+                    }
+                }
+            } break;
         case PROJECTOR_TYPE_QWEN3TTS_GEN:
             {
                 if (params->gen_process == CLIP_GEN_PROCESS_GEN_WAV) {
@@ -5604,6 +5777,31 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
                 }
                 set_input_f32("pos_emb", pos_emb);
             } break;
+        case PROJECTOR_TYPE_LFM3A:
+            {
+                GGML_ASSERT(imgs.entries.size() == 1);
+                const int n_pos = clip_n_output_tokens(ctx, &imgs.entries.front());
+
+                // the "pos" slot leads the state; without a stream the state is zero, the clip is encoded from its start
+                int base = 0;
+                if (params->enc_state != nullptr) {
+                    const auto & slots = params->enc_state->slots;
+                    float base_f = 0.0f;
+                    ggml_backend_tensor_get(slots[0], &base_f, 0, sizeof(float));
+                    base = (int) base_f;
+                    size_t i = 0;
+                    for (const auto & slot : list_lfm3a_state_slots(hparams, model)) {
+                        ggml_backend_tensor_copy(slots[i++], get_inp_tensor(("state_in_" + slot.name).c_str()));
+                    }
+                } else {
+                    for (const auto & slot : list_lfm3a_state_slots(hparams, model)) {
+                        ggml_tensor * t = get_inp_tensor(("state_in_" + slot.name).c_str());
+                        ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
+                    }
+                }
+
+                set_lfm3a_window_inputs(base, n_pos, hparams.attn_window_size);
+            } break;
         case PROJECTOR_TYPE_PARAKEET:
             {
                 GGML_ASSERT(imgs.entries.size() == 1);
@@ -5822,9 +6020,6 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
         return false;
     }
-
-    // the last node is the embedding tensor, code2wav has no out_embd
-    ggml_tensor * embeddings = params->out_embd ? ggml_graph_node(gf, -1) : nullptr;
 
     if (embeddings != nullptr) {
         // sanity check (assuming that all images in batch have the same number of tokens, so we only check the first one)
@@ -6058,6 +6253,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_QWEN3TTS_SPKENC:
             return ctx->model.mm_fc_w->ne[2];
         case PROJECTOR_TYPE_QWEN3TTS_GEN:
+        case PROJECTOR_TYPE_LFM3A_GEN:
             return ctx->model.gen_code_out_embd_w->ne[0];
         case PROJECTOR_TYPE_POCKETTTS_SPKENC:
             return ctx->model.spk_proj_w->ne[1];
