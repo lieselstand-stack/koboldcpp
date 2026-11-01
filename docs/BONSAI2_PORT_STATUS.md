@@ -375,3 +375,34 @@ Compared `src/models/qwen35.cpp` on Prism branch `prism` against this fork's `ko
 2. The critical unresolved chain is exact GGUF folded-name metadata → loader tensor resolution → registered rotation/sign data → graph callsite.
 3. Next audit: inspect loader registration and the `build_lora_mm`/Hadamard map lookup in detail, including tied-output and inverse-after-lookup handling; then produce a per-projection coverage table with evidence and explicit unknowns.
 4. Exact target GGUF inventory is still unavailable. No claim is made that the 9B artifact's GDN gate or any other specific tensor is folded.
+
+
+## Phase 1 source/API mapping — exact Hadamard loader parity (2026-11-01)
+
+**Status: loader implementation compared; no source-code changes and no build/runtime validation.**
+
+### `load_tensors_hadamard()` comparison
+
+Compared the complete function in fork `src/llama-model.cpp` against Prism branch `prism`:
+- The function bodies are **byte-for-byte identical** in the inspected snapshots (8,475 characters each).
+- Both resolve metadata-listed names through `get_tensor()`, special-case tied output binding, validate tensor presence, block divisibility and allocated buffers, normalize CPU extra buffer types, allocate/cache Walsh-Hadamard rotation tensors by block size and buffer type, create sign tensors by width/buffer type, optionally configure grouped GDN value-head permutation for `.ssm_out.`, and register the transform against the actual tensor pointer.
+- Therefore the generic tensor-registration machinery itself is not currently a fork-vs-Prism delta. The remaining risk is whether the target metadata names resolve to the intended fork tensors and whether graph callsites consume those registered pointers correctly.
+
+### `load_hparams_hadamard()` comparison
+
+The functions are structurally near-identical, with a small, explicit compatibility-scope difference:
+- Prism currently allowlists additional architectures `LLM_ARCH_DSPARK` and `LLM_ARCH_GEMMA4`; the fork does not.
+- Prism currently allowlists `nextn.draft_head` as a folded weight kind; the fork does not.
+- Prism has an additional DSpark-specific restriction requiring only `output.weight`, and rejects inverse embedding metadata for DSpark. Those paths are outside the approved Qwen35-only milestone.
+- The fork's existing Qwen35/Qwen35-MoE architecture allowance, metadata validation, folded-kind validation, sign-table checks, inverse token-embedding restriction, and tied-output checks otherwise match the inspected Prism implementation.
+
+### Consequence for the port
+
+Do **not** rewrite or wholesale copy `load_tensors_hadamard()`: source evidence shows no implementation delta to justify it. Keep the Qwen35 scope guard conservative. The next decisive task is now the exact fixture chain:
+
+1. Capture metadata and tensor directory from the chosen official Bonsai 2 Qwen35 `Q2_0` GGUF.
+2. For every listed folded/inverse name, verify the exact fork loader tensor name and object pointer.
+3. Verify the corresponding Qwen35 graph callsite uses the Hadamard-aware helper or the correct inverse-after-lookup path.
+4. Check GDN grouped-value permutation metadata against the selected artifact and actual dimensions; do not infer it from a different model size.
+
+**Updated finding:** metadata parser and tensor-registration functions are not the primary identified gap for Qwen35. The unresolved work is fixture-specific name/shape mapping and complete graph coverage, followed by runtime validation.
