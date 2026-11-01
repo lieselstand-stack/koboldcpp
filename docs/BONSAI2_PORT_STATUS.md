@@ -268,3 +268,33 @@ This is the source-level contract to compare against the fork implementation. It
 
 ### Interim conclusion
 The Prism loader is metadata-driven and validates actual named tensors before registering rotation/sign buffers. Qwen35 dense attention has visible graph transform call sites; GDN remains unresolved at the concrete folded-weight contract level. Implementation should wait until the target GGUF inventory closes this gap.
+
+
+## Phase 1 source/API mapping — fork Hadamard-aware matmul and loader comparison (2026-11-01)
+
+**Status: core generic mechanism confirmed; target model mapping still open. No source-code changes.**
+
+### Fork graph mechanism confirmed
+In `src/llama-graph.cpp`, `build_lora_mm(w, cur, ...)` calls `build_hadamard_input(w, cur)` before `ggml_mul_mat(w, transformed_input)`. The helper:
+- looks up the actual weight tensor pointer in the graph's registered Hadamard rotation map;
+- optionally performs the grouped-head feature permutation;
+- applies sign multiplication when sign metadata exists;
+- applies the normalized Hadamard rotation;
+- caches/reuses the transformed activation;
+- leaves LoRA's delta path operating on the original, untransformed activation.
+
+This means the generic folded-weight execution path already exists. The remaining issue is proving that each target GGUF weight is registered to the correct fork tensor and that its graph projection uses this helper.
+
+### Fork loader validation observed
+The fork's `load_hparams_hadamard()` already validates metadata version 1/2, tied-output/version consistency, block size, transform, axis, sign mode, sign tables, nonempty weight list, supported architectures, duplicate names, and an allowlist of weight-name kinds. The allowlist includes `attn_qkv` and `ssm_out`, but does not include every Qwen35 projection kind (for example, the gate projection is not listed as a generic folded kind).
+
+The loader's allowlist is an explicit compatibility boundary: do not widen it based only on architecture naming. First confirm the concrete model's folded tensor inventory and whether each projection is actually routed through a verified Hadamard-aware matmul.
+
+### Updated interpretation
+- Generic activation transformation and folded matmul support are present in the fork.
+- Qwen35 GDN's combined `wqkv` projection appears structurally eligible through the `attn_qkv` kind, and `ssm_out` is explicitly allowlisted. This is a name-kind observation, not confirmation that a real target GGUF contains those folded tensors.
+- GDN `alpha`, `beta`, `wqkv_gate`, convolution kernel, and normalization parameters are not automatically covered by the current allowlist. Their required treatment must come from target metadata and Prism's format contract; do not assume they should be folded.
+- The largest remaining unknown is now concrete: obtain the target GGUF metadata/tensor inventory and construct the mapping matrix, then trace each mapped tensor through loader registration and graph call sites.
+
+### Next source audit step
+Inspect Prism's full tensor-name/architecture registration path and locate a trustworthy concrete Bonsai 2 Qwen35 `Q2_0` GGUF fixture or metadata listing. If no fixture is available from the repository or user, report that limitation explicitly rather than fabricating tensor names.
