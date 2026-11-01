@@ -34,15 +34,16 @@ Verified Prism components:
 - Contains substantial Prism/Hadamard infrastructure: metadata validation, folded tensor registration, graph helper calls, and Qwen35 latent token embedding restoration.
 - The model/graph files are close in Hadamard symbol coverage, but not line-equivalent to Prism; fork graph/model files have diverged.
 - Qwen35 fork implementation is substantially shorter than Prism's current version and does not show the full set of model-specific Hadamard paths (including Prism's GDN-related transforms and inverse/output handling). This is a concrete port gap and must be resolved before claiming Bonsai 2 Qwen35 correctness.
+- Targeted comparison of Qwen35 MTP: fork has a single-step `graph_mtp` path calling `build_attn(...)`; Prism additionally implements `graph_mtp::build_chain()` for chained speculative drafts. Prism's chain explicitly applies K/V Hadamard rotations before KV-cache writes and the V inverse after attention. The fork has no matching `build_chain()` symbol in `src/models/qwen35.cpp` at this branch snapshot. Treat chained MTP as an unported feature; do not add isolated rotations to the single-step path without confirming `build_attn()` semantics.
 - Exact metadata and loader validation audit is complete at source level; execution correctness remains unverified.
 - No build or model inference has been performed by the GitHub connector.
 
 ## Implementation plan
 
 1. [x] Confirm upstream format facts and identify the Prism runtime contract.
-2. [ ] Diff exact metadata structures and validation against the fork; map missing fields and architecture coverage.
+2. [x] Diff exact metadata structures and validation against the fork; map missing fields and architecture coverage.
 3. [ ] Port safe metadata validation and folded tensor registration without enabling unsupported execution paths.
-4. [ ] Port graph-level activation transforms and embedding/output inverse handling for Qwen35.
+4. [ ] Port graph-level activation transforms and embedding/output inverse handling for Qwen35, including model-specific MTP chain support or an explicit guard.
 5. [ ] Add model-load guards: reject unsupported metadata/architectures rather than silently generating corrupted output.
 6. [ ] Build and test ordinary Qwen35 regression.
 7. [ ] Test a small Bonsai 2 `Q2_0` GGUF with coherent generation/logit checks.
@@ -51,7 +52,7 @@ Verified Prism components:
 
 ## Validation checklist
 
-- [ ] Source audit complete
+- [x] Source audit complete (source-level only; chained MTP gap recorded)
 - [ ] Patch implemented
 - [ ] Build succeeds
 - [ ] Qwen35 regression passes
