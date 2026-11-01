@@ -62,3 +62,65 @@ Verified Prism components:
 - [ ] Intel Arc B580 backend validated
 
 Status labels are intentionally conservative: source-audited, implemented, built, and runtime-validated are distinct states.
+
+## Detailed execution plan — planning phase
+
+**Current phase: planning. No source-code changes authorized yet.** Work proceeds in small reviewed steps. Each implementation step must have a defined scope, evidence, and exit criterion before code is changed.
+
+### Phase 0 — Freeze baseline and scope
+- [ ] Record the exact target branch/base commit and reference Prism revision used for comparisons.
+- [ ] Preserve the current source-audit findings as the baseline; do not treat the local `lel` branch as evidence.
+- [ ] Define the initial acceptance target: ordinary Qwen35 remains unchanged, and a supported Bonsai 2 Qwen35 `Q2_0` model loads and generates coherently.
+- [ ] Decide whether chained MTP is required for the first usable milestone or can be explicitly disabled/rejected with a clear diagnostic.
+- **Exit criterion:** scope and exclusions are written down and agreed before implementation.
+
+### Phase 1 — Close remaining source/API questions
+- [ ] Inspect the fork's exact `build_attn()` implementation and establish whether its normal attention path already applies the relevant K/V rotations, including ordering relative to RoPE, KV-cache writes, and inverse transforms.
+- [ ] Map the fork's Qwen35 GDN, attention, embedding, output, and MTP data structures against the Prism implementation.
+- [ ] Identify Prism-only APIs/types and determine the smallest compatible adaptation; do not wholesale replace the fork's Qwen35 implementation.
+- [ ] Trace GGUF metadata → model loader → tensor registration → graph execution for the target model.
+- **Exit criterion:** every required transform has a known insertion point, and every unresolved compatibility issue is listed explicitly.
+
+### Phase 2 — Metadata and tensor loading, safely gated
+- [ ] Specify accepted `prism.hadamard.*` metadata, versions, architecture scope, dimensions, tensor names, and tied-output constraints.
+- [ ] Specify validation errors for malformed, incomplete, or unsupported metadata.
+- [ ] Plan folded-tensor and sign/rotation tensor registration, including buffer/device constraints.
+- [ ] Ensure unsupported combinations fail during model load rather than silently proceeding.
+- **Exit criterion:** loader contract and negative cases are reviewed before coding.
+
+### Phase 3 — Runtime graph integration for Qwen35
+- [ ] Map each folded projection to its required activation transform and inverse/restore path.
+- [ ] Preserve latent token embedding restoration and verify output/head behavior.
+- [ ] Handle GDN and attention ordering explicitly; avoid assumptions based only on matching symbol names.
+- [ ] Decide and document MTP-chain behavior for the first milestone: implement it only if the required API/data flow is understood; otherwise reject/disable that path explicitly.
+- **Exit criterion:** a graph-level data-flow map exists and can be checked against source changes.
+
+### Phase 4 — GGML format support
+- [ ] Treat official Bonsai 2 `Q2_0` separately from Prism-private `PQ2_0` and `PTQ1_0`.
+- [ ] For each private format, audit type traits, quantization/dequantization, GGUF serialization, CPU kernels, backend dispatch, and Hadamard compatibility.
+- [ ] Do not expose a format as supported until all required layers are implemented and tested.
+- **Exit criterion:** per-format support matrix lists implementation and validation status independently.
+
+### Phase 5 — Incremental implementation and review
+- [ ] Implement only the smallest reviewed slice from Phases 2–4.
+- [ ] Review the exact diff for scope, ordering, API compatibility, and unsupported-path guards.
+- [ ] Update this document in the same checkpoint with what changed, what did not, and what remains unverified.
+- [ ] Commit only after the diff is reviewed; no unrelated cleanup or broad file replacement.
+- **Exit criterion:** each commit corresponds to one bounded technical change with a clear review note.
+
+### Phase 6 — Build and validation gates
+1. [ ] Build the target branch; record exact command, configuration, and output.
+2. [ ] Run ordinary Qwen35 regression first.
+3. [ ] Load a small, known Bonsai 2 Qwen35 `Q2_0` GGUF; capture loader logs and verify metadata/tensor acceptance.
+4. [ ] Run deterministic or repeatable generation/logit checks; reject “loads successfully” as sufficient evidence.
+5. [ ] Test unsupported/malformed metadata and confirm clean rejection.
+6. [ ] Validate Intel Arc B580/Vulkan separately; do not infer backend correctness from CPU success.
+7. [ ] Test `PQ2_0` and `PTQ1_0` only after their full format paths are implemented.
+- **Exit criterion:** each result is recorded as pass/fail/not-run with evidence; no claim of runtime support without actual execution.
+
+### Working rules
+- No source-code edits during the planning phase.
+- Do not mark a task complete based on inspection alone when it requires a build or runtime test.
+- Keep “audited”, “implemented”, “built”, and “runtime-validated” as separate status labels.
+- Stop at each checkpoint for review before expanding scope.
+
