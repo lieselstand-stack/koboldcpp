@@ -343,3 +343,35 @@ This table is a **source-path map**, not a claim that each listed tensor is fold
 ### Phase 1 decision
 
 The public evidence supports selecting Bonsai 2 9B as a plausible small Qwen35 fixture, but the exact artifact must be fixed before implementation. The next audit checkpoint is to capture its GGUF metadata and tensor inventory, then verify each listed folded tensor against loader registration and graph callsites. If the user has already downloaded the exact file, a metadata dump from that file is preferable to relying on secondary manifests.
+
+
+## Phase 1 source/API mapping — Prism/fork Qwen35 graph parity pass (2026-11-01)
+
+**Status: comparative source inspection; no source-code changes and no runtime validation.**
+
+### Main graph and embedding/output paths
+
+Compared `src/models/qwen35.cpp` on Prism branch `prism` against this fork's `koboldcpp-bonsai2` branch:
+- Both main graph paths call `build_inp_embd(model.tok_embd)` and finish with `build_norm(... model.output_norm ...)` followed by `build_lora_mm(model.output, ...)`.
+- Both Qwen35 GDN projection helpers use `build_lora_mm` for `wqkv` and `wqkv_gate`. Both GDN paths use `build_lora_mm` for beta/alpha projections and `ssm_out`.
+- Both main graph paths dispatch recurrent/GDN layers to `build_layer_attn_linear` and full-attention layers to `build_layer_attn`.
+
+### Dense attention transform boundary
+
+- Qwen35 computes Q/K normalization and MRoPE before calling the generic `build_attn(...)` helper in both inspected implementations.
+- Earlier fork tracing established that its generic KV helper applies registered Q/K/V rotations before KV-cache writes and restores the V basis after attention.
+- Therefore the main dense-attention transform insertion point is already present in the fork's generic helper. The remaining requirement is proving that the target GGUF's exact folded tensors are registered and that all expected projections use the matching path.
+
+### GDN interpretation — deliberately unresolved
+
+- Both inspected Qwen35 GDN implementations route `wqkv`, `wqkv_gate`, `ssm_beta`, `ssm_alpha` and `ssm_out` through `build_lora_mm`.
+- No explicit `llama_mul_mat_hadamard` call was found inside the inspected GDN body in either file. This does not prove GDN is exempt: registered transforms may be applied inside `build_lora_mm`, and the exact folded-name metadata remains unknown.
+- The Prism/fork gated-normalization implementation differs: Prism uses `ggml_swiglu_split` for the fused SiLU-gate multiply, while the fork builds SiLU then multiplies. This is not automatically a Bonsai port defect; preserve the fork implementation unless a targeted equivalence test or format contract shows it is incorrect.
+- Prism has additional MTP/NextN and chained-draft paths absent or different in the fork. MTP remains explicitly excluded from Milestone 1; do not let these differences expand scope silently.
+
+### Conclusions and next checks
+
+1. The generic Hadamard-aware matmul plus generic attention rotations appear to be the intended integration backbone; no duplicate Q/K/V rotations should be added speculatively.
+2. The critical unresolved chain is exact GGUF folded-name metadata → loader tensor resolution → registered rotation/sign data → graph callsite.
+3. Next audit: inspect loader registration and the `build_lora_mm`/Hadamard map lookup in detail, including tied-output and inverse-after-lookup handling; then produce a per-projection coverage table with evidence and explicit unknowns.
+4. Exact target GGUF inventory is still unavailable. No claim is made that the 9B artifact's GDN gate or any other specific tensor is folded.
