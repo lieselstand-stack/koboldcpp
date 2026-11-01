@@ -169,3 +169,25 @@ Complete Phase 1 source/API mapping for the non-MTP Qwen35 path. No source-code 
 ## Priority clarification
 
 The user confirmed: **“Quero rodar corretamente. Depois otimiza.”** Therefore, this port is correctness-first. Performance tuning is explicitly deferred until the supported Bonsai 2 Qwen35 `Q2_0` path builds, passes ordinary Qwen35 regression, and produces coherent, repeatable output. No speed optimization is part of the initial correctness milestone.
+
+
+## Phase 1 source/API mapping — non-MTP path (2026-11-01)
+
+**Status: partial source mapping completed; no source-code changes.**
+
+### Confirmed in the fork
+- `src/llama-graph.cpp`: the KV-cache `build_attn(...)` overload applies `self_k_rot[il]` to **Q and K**, and `self_v_rot[il]` to **V**, before the graph expands these nodes and before K/V are copied into the KV cache.
+- The same path applies `self_v_rot[il]` to the attention result after MHA. Therefore the earlier uncertainty is resolved: the generic KV attention helper already contains these rotation hooks; Qwen35 callers do not need isolated duplicate rotations in that helper.
+- `src/models/qwen35.cpp`: the regular Qwen35 attention path applies MRoPE to Q/K, then calls the generic `build_attn(inp, ...)`. The Hadamard hooks therefore execute inside that helper after the caller's RoPE operations and before KV-cache writes.
+- `src/llama-graph.cpp` also contains Hadamard-aware paths for other attention variants and graph input setup; these must not be assumed equivalent to the Qwen35 path without tracing the specific caller.
+- `src/models/qwen35.cpp` has a single-block MTP graph, but MTP is excluded from Milestone 1. No MTP changes are planned.
+
+### Still to map before implementation
+- [ ] Trace how the selected Qwen35 Bonsai2 GGUF folded-weight names map to the fork's actual Qwen35 projection tensors.
+- [ ] Trace Qwen35 linear-attention/GDN path end-to-end and identify each required rotation/inverse relative to convolution, recurrent state update, and output projection.
+- [ ] Verify embedding inverse-after-lookup and output/head handling for the selected metadata/version, including tied-output behavior if applicable.
+- [ ] Confirm all intended folded projections reach a Hadamard-aware matmul path; loader validation must reject any that do not.
+- [ ] Record the exact target model's metadata and tensor inventory as the implementation/test fixture, without assuming every Prism metadata option is required.
+
+### Interim conclusion
+The generic KV attention helper already has K/Q/V rotation hooks, so the likely work is **Qwen35-specific data-flow coverage and loader-to-graph binding**, not blindly adding duplicate rotations to `build_attn()`. This is a source-level conclusion only; numerical correctness remains untested.
