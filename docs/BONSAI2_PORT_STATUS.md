@@ -298,3 +298,48 @@ The loader's allowlist is an explicit compatibility boundary: do not widen it ba
 
 ### Next source audit step
 Inspect Prism's full tensor-name/architecture registration path and locate a trustworthy concrete Bonsai 2 Qwen35 `Q2_0` GGUF fixture or metadata listing. If no fixture is available from the repository or user, report that limitation explicitly rather than fabricating tensor names.
+
+
+## Phase 1 source/API mapping — public Bonsai 2 fixture evidence (2026-11-01)
+
+**Status: public model facts found; exact target GGUF tensor-name mapping remains incomplete. No source-code changes.**
+
+### Public Bonsai 2 Qwen35 evidence
+
+The public PrismML model card for Bonsai 2 9B identifies:
+- Base architecture: Qwen3.5-9B; 32 decoder blocks, hidden width 4096, separate embedding and LM head.
+- Hybrid layout: 24 linear-attention/GDN layers and 8 full-attention layers.
+- Available language GGUFs: official `Q2_0`, Prism `PQ2_0`, and `PTQ1_0`; a separate MTP-bearing artifact is also listed.
+- Weight basis: ternary weights with blockwise Hadamard folded into weights; runtime activation transforms are required.
+- Higher-precision GDN state-path tensors include `ssm_alpha` and `ssm_beta`; the card describes normalization and state-path tensors as higher precision.
+
+Sources: [PrismML Bonsai 2 9B model card](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf), [PrismML Bonsai demo format guide](https://github.com/PrismML-Eng/Bonsai-demo/blob/main/MODEL-FORMATS.md).
+
+### Concrete inventory limitation
+
+A public detailed tensor inventory was found for Bonsai 2 27B, including folded GDN projections (`attn_qkv.weight`, `attn_gate.weight`, `ssm_out.weight`), full-attention projections, FFN projections, embedding and output tensors. This is useful as architecture-family evidence, but **it is not the 9B fixture** and must not be copied as the 9B tensor manifest.
+
+No authoritative complete tensor-name inventory for the selected 9B official `Q2_0` file has yet been captured in this audit. The model card confirms file availability and architecture, but does not enumerate all `prism.hadamard.weight_names` and inverse names. Exact mapping therefore remains blocked on one of:
+1. inspecting the actual 9B GGUF metadata/tensor directory, or
+2. obtaining an authoritative complete manifest for that exact artifact.
+
+Do not widen the loader allowlist or assert GDN transform coverage based only on the 27B inventory.
+
+### Mapping matrix — current evidence
+
+| GGUF tensor family | Fork Qwen35 object/path | Hadamard-aware execution | Status |
+|---|---|---|---|
+| `token_embd.weight` | `model.tok_embd` → `build_inp_embd()` | Generic inverse-after-lookup infrastructure exists | Exact target metadata/version and tied-output behavior pending |
+| `output.weight` | `model.output` → final `build_lora_mm()` | Generic Hadamard-aware matmul exists | Exact target folded-name registration pending |
+| Dense attention Q/K/V | `create_tensor_qkv()` and `layer.wo` | Generic KV attention helper has Q/K/V rotations; projection matmul helper exists | Exact target folded names and complete coverage pending |
+| GDN combined QKV | `layer.wqkv` / `LLM_TENSOR_ATTN_QKV` | `build_lora_mm()` uses Hadamard-aware matmul | Target manifest and transform contract pending |
+| GDN gate | `layer.wqkv_gate` / `LLM_TENSOR_ATTN_GATE` | `build_lora_mm()` call exists, but loader allowlist currently does not establish support | Must resolve from exact metadata; reject if unsupported |
+| GDN output | `layer.ssm_out` / `LLM_TENSOR_SSM_OUT` | `build_lora_mm()`; loader kind is allowlisted | Target manifest and transform placement pending |
+| GDN alpha/beta/conv/norm | `ssm_alpha`, `ssm_beta`, `ssm_conv1d`, `ssm_norm` | Not assumed folded | Verify against exact metadata; no unsupported transform inferred |
+| FFN gate/up/down | `layer.ffn_gate/up/down` | Generic Hadamard-aware matmul path | Exact target names/registration pending |
+
+This table is a **source-path map**, not a claim that each listed tensor is folded in the 9B GGUF.
+
+### Phase 1 decision
+
+The public evidence supports selecting Bonsai 2 9B as a plausible small Qwen35 fixture, but the exact artifact must be fixed before implementation. The next audit checkpoint is to capture its GGUF metadata and tensor inventory, then verify each listed folded tensor against loader registration and graph callsites. If the user has already downloaded the exact file, a metadata dump from that file is preferable to relying on secondary manifests.
