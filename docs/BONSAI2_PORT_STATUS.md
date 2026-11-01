@@ -65,7 +65,7 @@ Status labels are intentionally conservative: source-audited, implemented, built
 
 ## Detailed execution plan — planning phase
 
-**Current phase: planning. No source-code changes authorized yet.** Work proceeds in small reviewed steps. Each implementation step must have a defined scope, evidence, and exit criterion before code is changed.
+**Current phase: planning. No source-code changes authorized yet.** Priority is correctness first, robustness second, backend validation third, and optimization only after functional correctness is demonstrated. Work proceeds in small reviewed steps. Each implementation step must have a defined scope, evidence, and exit criterion before code is changed.
 
 ### Phase 0 — Freeze baseline and scope
 - [ ] Record the exact target branch/base commit and reference Prism revision used for comparisons.
@@ -120,6 +120,14 @@ Status labels are intentionally conservative: source-audited, implemented, built
 7. [ ] Test `PQ2_0` and `PTQ1_0` only after their full format paths are implemented.
 - **Exit criterion:** each result is recorded as pass/fail/not-run with evidence; no claim of runtime support without actual execution.
 
+### Optimization policy
+- [x] User priority confirmed: **make it run correctly first; optimize afterward**.
+- [ ] Establish a correct baseline before performance work: successful build, ordinary Qwen35 regression, and coherent Bonsai 2 Qwen35 `Q2_0` generation.
+- [ ] Record baseline performance only after correctness checks pass.
+- [ ] Optimize one measured bottleneck at a time; rerun correctness tests after every optimization.
+- [ ] Do not accept speedups that alter correctness or bypass unsupported-path validation.
+- **Exit criterion:** optimization begins only after functional acceptance criteria are met and a baseline is recorded.
+
 ### Working rules
 - No source-code edits during the planning phase.
 - Do not mark a task complete based on inspection alone when it requires a build or runtime test.
@@ -156,3 +164,8 @@ Status labels are intentionally conservative: source-audited, implemented, built
 
 ### Next action
 Complete Phase 1 source/API mapping for the non-MTP Qwen35 path. No source-code changes until that mapping and its insertion points are reviewed.
+
+
+## Priority clarification
+
+The user confirmed: **“Quero rodar corretamente. Depois otimiza.”** Therefore, this port is correctness-first. Performance tuning is explicitly deferred until the supported Bonsai 2 Qwen35 `Q2_0` path builds, passes ordinary Qwen35 regression, and produces coherent, repeatable output. No speed optimization is part of the initial correctness milestone.
