@@ -191,3 +191,41 @@ The user confirmed: **“Quero rodar corretamente. Depois otimiza.”** Therefor
 
 ### Interim conclusion
 The generic KV attention helper already has K/Q/V rotation hooks, so the likely work is **Qwen35-specific data-flow coverage and loader-to-graph binding**, not blindly adding duplicate rotations to `build_attn()`. This is a source-level conclusion only; numerical correctness remains untested.
+
+
+## Phase 1 source/API mapping — Qwen35 GDN path (2026-11-01)
+
+**Status: source-level trace advanced; no source-code changes.**
+
+### Fork path traced
+In `src/models/qwen35.cpp`, `build_layer_attn_linear()` follows this order:
+
+1. `build_qkvz()` computes the combined Q/K/V projection (`wqkv`) and gate projection (`wqkv_gate`).
+2. Q/K/V pass through the recurrent convolution input/state path: `build_conv_state()`, `ggml_ssm_conv()`, SiLU, then Q/K/V views.
+3. Q and K receive `build_gdn_l2_norm()`; optional repeat aligns K/Q heads with V heads.
+4. `build_recurrent_attn()` performs the recurrent GDN update using the resulting Q/K/V, gate, beta, and state.
+5. Gated normalization combines recurrent output and `z`; `ssm_out` projects the result back to model width.
+
+The fork's shown GDN function contains no explicit Bonsai/Hadamard transform calls around these stages. This does **not** establish the exact missing transform placement by itself; it establishes that the existing dense-attention hooks do not automatically cover this separate recurrent path.
+
+### Tensor-name mapping observed in the fork
+Qwen35 loader names relevant to this path are represented through architecture tensor identifiers:
+- `LLM_TENSOR_ATTN_QKV` → `layer.wqkv`
+- `LLM_TENSOR_ATTN_GATE` → `layer.wqkv_gate`
+- `LLM_TENSOR_SSM_CONV1D` → `layer.ssm_conv1d`
+- `LLM_TENSOR_SSM_BETA` / `LLM_TENSOR_SSM_ALPHA` → `layer.ssm_beta` / `layer.ssm_alpha`
+- `LLM_TENSOR_SSM_OUT` → `layer.ssm_out`
+- Dense attention uses `create_tensor_qkv()` plus `LLM_TENSOR_ATTN_OUT` (`layer.wo`).
+- FFN uses `LLM_TENSOR_FFN_GATE`, `LLM_TENSOR_FFN_UP`, and `LLM_TENSOR_FFN_DOWN`.
+
+These are fork-side architecture mappings, **not yet a verified mapping from a concrete Bonsai 2 GGUF's folded tensor names**. The target fixture's metadata and tensor inventory are still required to close that gap.
+
+### Phase 1 status update
+- [x] Trace fork Qwen35 GDN execution order at source level.
+- [x] Identify that the GDN path is separate from generic KV attention and currently has no explicit Hadamard operations in the inspected function.
+- [ ] Compare Prism's exact Qwen35 GDN transform placement and identify the minimum compatible fork insertion points.
+- [ ] Resolve folded GGUF tensor names to the fork architecture tensor identifiers using a concrete target fixture.
+- [ ] Finish embedding/output/tied-head mapping and the complete folded-projection coverage matrix.
+
+### Interim conclusion
+The port cannot be treated as “just wire the existing KV rotations.” Dense attention and GDN are separate execution paths. The GDN transform contract must be copied/adapted from Prism with ordering preserved around convolution, normalization, recurrent state update, gated normalization, and `ssm_out`. No implementation or numerical correctness is claimed yet.
