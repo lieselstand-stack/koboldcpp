@@ -71,8 +71,10 @@ Status labels are intentionally conservative: source-audited, implemented, built
 - [ ] Record the exact target branch/base commit and reference Prism revision used for comparisons.
 - [ ] Preserve the current source-audit findings as the baseline; do not treat the local `lel` branch as evidence.
 - [ ] Define the initial acceptance target: ordinary Qwen35 remains unchanged, and a supported Bonsai 2 Qwen35 `Q2_0` model loads and generates coherently.
-- [ ] Decide whether chained MTP is required for the first usable milestone or can be explicitly disabled/rejected with a clear diagnostic.
-- **Exit criterion:** scope and exclusions are written down and agreed before implementation.
+- [x] Scope approved: first milestone targets ordinary Qwen35 regression plus one Bonsai 2 Qwen35 `Q2_0` model; MTP is excluded initially.
+- [x] MTP-chain support is deferred; do not implement or imply it is supported in this milestone. If the selected model/runtime path requires MTP, stop and report the dependency rather than silently expanding scope.
+- [x] `PQ2_0`, `PTQ1_0`, other architectures, SYCL/XMX, performance optimization, and broad refactoring are out of scope for this milestone.
+- **Exit criterion:** scope and exclusions recorded and approved before implementation.
 
 ### Phase 1 — Close remaining source/API questions
 - [ ] Inspect the fork's exact `build_attn()` implementation and establish whether its normal attention path already applies the relevant K/V rotations, including ordering relative to RoPE, KV-cache writes, and inverse transforms.
@@ -92,7 +94,7 @@ Status labels are intentionally conservative: source-audited, implemented, built
 - [ ] Map each folded projection to its required activation transform and inverse/restore path.
 - [ ] Preserve latent token embedding restoration and verify output/head behavior.
 - [ ] Handle GDN and attention ordering explicitly; avoid assumptions based only on matching symbol names.
-- [ ] Decide and document MTP-chain behavior for the first milestone: implement it only if the required API/data flow is understood; otherwise reject/disable that path explicitly.
+- [x] MTP-chain behavior for the first milestone: excluded; no MTP-chain implementation. Required-model dependencies must be identified before coding.
 - **Exit criterion:** a graph-level data-flow map exists and can be checked against source changes.
 
 ### Phase 4 — GGML format support
@@ -124,3 +126,33 @@ Status labels are intentionally conservative: source-audited, implemented, built
 - Keep “audited”, “implemented”, “built”, and “runtime-validated” as separate status labels.
 - Stop at each checkpoint for review before expanding scope.
 
+
+
+## Milestone 1 — approved scope
+
+**Status: scope approved; implementation not started.**
+
+### Included
+- Bonsai 2 Qwen35 using official `Q2_0` format.
+- Required Hadamard metadata validation and folded tensor registration.
+- Qwen35 graph transforms, including embedding/output and GDN/attention ordering as required by the selected model.
+- Clear load-time rejection for unsupported or malformed metadata/configurations.
+- Regression for ordinary Qwen35.
+- Build and coherent generation validation for one known Bonsai 2 Qwen35 `Q2_0` GGUF.
+
+### Explicitly excluded
+- MTP, including chained speculative MTP. If the chosen model requires MTP for its intended execution, pause and reassess rather than expanding scope silently.
+- Prism-private `PQ2_0` and `PTQ1_0` formats.
+- Architectures other than Qwen35.
+- SYCL/XMX work, performance optimization, and unrelated refactoring.
+
+### Acceptance criteria
+- [ ] Target branch builds; exact command/configuration and output recorded.
+- [ ] Ordinary Qwen35 regression passes.
+- [ ] Known Bonsai 2 Qwen35 `Q2_0` model loads with expected metadata/tensors.
+- [ ] Repeatable generation/logit checks show coherent behavior; load success alone is insufficient.
+- [ ] Unsupported/malformed Bonsai metadata is rejected clearly.
+- [ ] Intel Arc B580/Vulkan result recorded separately; not inferred from CPU validation.
+
+### Next action
+Complete Phase 1 source/API mapping for the non-MTP Qwen35 path. No source-code changes until that mapping and its insertion points are reviewed.
