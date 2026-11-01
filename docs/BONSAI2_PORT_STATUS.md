@@ -229,3 +229,42 @@ These are fork-side architecture mappings, **not yet a verified mapping from a c
 
 ### Interim conclusion
 The port cannot be treated as “just wire the existing KV rotations.” Dense attention and GDN are separate execution paths. The GDN transform contract must be copied/adapted from Prism with ordering preserved around convolution, normalization, recurrent state update, gated normalization, and `ssm_out`. No implementation or numerical correctness is claimed yet.
+
+
+## Phase 1 source/API mapping — Prism GDN comparison and loader contract (2026-11-01)
+
+**Status: comparison advanced; no source-code changes.**
+
+### Prism Qwen35 GDN execution order
+The inspected Prism `src/models/qwen35.cpp` linear-attention path has this order:
+1. `wqkv` and `wqkv_gate` projections; beta/alpha projections and gate preparation.
+2. Recurrent convolution input/state preparation, then `ggml_ssm_conv` and SiLU.
+3. Q/K/V views from the convolved output; joint QK L2 normalization; optional K/Q head repeat.
+4. Recurrent GDN update.
+5. Gated normalization with `z`, reshape, then `ssm_out` projection.
+
+The fork follows the same broad stages, but its Q/K normalization uses `build_gdn_l2_norm()` separately, while the inspected Prism code uses a joint `ggml_l2_norm()` view. Treat this as a numerical-compatibility question, not an automatic code-copy instruction: Prism itself comments that a normalization migration changes packed-model logits.
+
+### Prism Hadamard call sites found in Qwen35
+The inspected Prism file contains explicit Hadamard calls for:
+- latent token embedding restoration (`tok_embd` via a rotation table);
+- dense attention Q/K and V transforms, including post-attention V-basis restoration;
+- an inverse-after-lookup embedding path;
+- additional attention Q/K/V and attention-output transforms.
+
+No explicit Hadamard call was found in the inspected Prism `build_layer_attn_linear()` GDN body. This is an important unresolved point: do not infer that GDN projections are exempt, nor invent transforms there. The concrete target GGUF's folded-weight inventory and the full Prism loader/graph contract must determine whether GDN uses pre-folded projections, another shared helper, or additional architecture handling.
+
+### Loader contract observed in Prism
+`load_tensors_hadamard()` iterates metadata-listed folded and inverse weight names, resolves each through `get_tensor(weight_name)`, and validates presence, block-size divisibility, and allocated buffer. It creates/caches block-size-specific normalized Walsh-Hadamard rotation tensors in the target weight buffer type, and creates sign tensors keyed by width and buffer type when sign metadata is present. Tied-output handling can bind the token embedding name to output or embedding tensors, with an explicit consistency check.
+
+This is the source-level contract to compare against the fork implementation. It does **not** yet prove that the fork's metadata parser, tensor registration, or Qwen35 architecture mapping matches the target model's actual tensor names.
+
+### Updated unresolved items
+- [ ] Inspect Prism's complete Qwen35 tensor-registration/loading path and compare it to the fork's `load_tensors_hadamard()` implementation, not just helper names.
+- [ ] Obtain or inspect a concrete Bonsai 2 Qwen35 `Q2_0` GGUF metadata/tensor inventory; map every folded/inverse name to the fork's actual tensor object.
+- [ ] Resolve whether GDN projections are folded and how the model format expects runtime activation transforms to be applied; do not extrapolate from dense-attention hooks.
+- [ ] Finish token embedding, inverse-after-lookup, output head, and tied-output mapping for the selected fixture.
+- [ ] Compare exact metadata validation and unsupported-path errors between Prism and fork.
+
+### Interim conclusion
+The Prism loader is metadata-driven and validates actual named tensors before registering rotation/sign buffers. Qwen35 dense attention has visible graph transform call sites; GDN remains unresolved at the concrete folded-weight contract level. Implementation should wait until the target GGUF inventory closes this gap.
