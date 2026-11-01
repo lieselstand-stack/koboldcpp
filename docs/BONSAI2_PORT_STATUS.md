@@ -31,8 +31,10 @@ Verified Prism components:
 
 ### This KoboldCpp fork
 - Contains Qwen35 and Qwen35-MoE implementations.
-- Contains partial Prism/Hadamard infrastructure in model and graph files.
-- Presence of helper names is not proof of parity with Prism's current metadata validation or end-to-end graph behavior.
+- Contains substantial Prism/Hadamard infrastructure: metadata validation, folded tensor registration, graph helper calls, and Qwen35 latent token embedding restoration.
+- The model/graph files are close in Hadamard symbol coverage, but not line-equivalent to Prism; fork graph/model files have diverged.
+- Qwen35 fork implementation is substantially shorter than Prism's current version and does not show the full set of model-specific Hadamard paths (including Prism's GDN-related transforms and inverse/output handling). This is a concrete port gap and must be resolved before claiming Bonsai 2 Qwen35 correctness.
+- Exact metadata and loader validation audit is complete at source level; execution correctness remains unverified.
 - No build or model inference has been performed by the GitHub connector.
 
 ## Implementation plan
